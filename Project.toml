@@ -1,0 +1,11 @@
+name = "ModbusRTU"
+uuid = "8d7398fa-b60b-4272-9c66-8a648b14b1f9"
+authors = ["notinaboat <notinaboat@icloud.com>"]
+version = "0.1.0"
+
+[deps]
+CRC = "44b605c4-b955-5f2b-9b6d-d2bd01d3d205"
+ReadmeDocs = "c63066b3-de92-487d-9da7-7c375a07912b"
+Retry = "20febd7b-183b-5ae2-ac4a-720e7ce64774"
+UnixIO = "86724fa0-f1e0-464a-a4b2-d754f3ca1f13"
+UnixIOHeaders = "b158d995-0785-490a-9245-6a3aff8d8d72"
