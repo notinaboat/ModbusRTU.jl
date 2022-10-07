@@ -27,6 +27,9 @@ crc_16 = crc(CRC_16_MODBUS)
 greet() = print("Hello World!")
 
 
+const READ_HOLDING_REGISTERS = 3
+const READ_INPUT_REGISTERS = 4
+const WRITE_SINGLE_REGISTER = 6
 
 # Exceptions
 
@@ -56,7 +59,7 @@ function open(port; speed=9600)
     UnixIO.tcsetattr(io) do attr
         UnixIO.setraw(attr)
         attr.speed=speed
-        attr.c_cflag |= C.CLOCAL
+        attr.c_cflag |= (C.CLOCAL | C.CREAD)
     end
     return io
 end
@@ -87,8 +90,8 @@ README"""
 
 Set baud rate of `io` to `speed_bps`.
 """
-function set_baud(io::T, speed) where T <: UnixIO.IO
-    XRTInterface.XRTModbus.modbus_flush(io)
+function set_baud(io::T, speed_bps) where T <: UnixIO.IO
+    flush(io)
     UnixIO.tcsetattr(io) do attr
         attr.speed=speed_bps
     end
@@ -129,8 +132,11 @@ end
 """
 See [6.8 0x08 Diagnostics, p21](https://www.modbus.org/docs/Modbus_Application_Protocol_V1_1b3.pdf)
 """
-function echo_query_data(io, server, data)
-    r = request(io, server, 8, UInt16[0, data...])
+function echo_query_data(io, server, data; kw...)
+    r = request(io, server, 8, UInt16[0, data...]; kw...)
+    if isodd(length(r))
+        return nothing
+    end
     reinterpret(UInt16, r)[2:end]
 end
 
@@ -140,7 +146,9 @@ True if `server` is reachable.
 """
 function ping(io, server)
     try
-        echo_query_data(io, server, [1234, 5678]) == [1234, 5678]
+        echo_query_data(io, server, [1234, 5678];
+                        attempt_count=10,
+                        timeout=0.1) == [1234, 5678]
     catch e
         if e isa ModbusTimeout
             false
@@ -158,6 +166,8 @@ end
 # MODBUS framing code assumes little-endian.
 @assert Base.ENDIAN_BOM == 0x04030201
 
+const function_code = Dict{Symbol, Int16}()
+
 README"""
 ## Modbus Requests
 
@@ -170,6 +180,7 @@ e.g. Send function 8 (Diagnostics) to server address 7:
 """
 function request(io, server, func, data=UInt8[]; kw...)
     if func isa Symbol
+        global function_code
         func = function_code[func]
     end
     request(io, [UInt8[server, func]; data]; kw...)
@@ -195,7 +206,7 @@ function request(io, frame; attempt_count=5, timeout=0.5)
             end
         catch err
             @retry if err isa ModbusCRCError
-                # FIXME @warn err
+                @warn err
             end
         end
 
@@ -204,7 +215,7 @@ function request(io, frame; attempt_count=5, timeout=0.5)
             @warn ModbusRequestError frame
         end
         @retry if err isa ModbusTimeout
-            # FIXME @warn err
+            @warn err
             sleep(0.01)
         end
     end
