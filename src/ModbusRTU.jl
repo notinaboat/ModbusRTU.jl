@@ -29,6 +29,7 @@ greet() = print("Hello World!")
 
 const READ_HOLDING_REGISTERS = 3
 const READ_INPUT_REGISTERS = 4
+const WRITE_SINGLE_COIL = 5
 const WRITE_SINGLE_REGISTER = 6
 
 # Exceptions
@@ -144,10 +145,10 @@ end
 """
 True if `server` is reachable.
 """
-function ping(io, server)
+function ping(io, server; attempt_count=10)
     try
         echo_query_data(io, server, [1234, 5678];
-                        attempt_count=10,
+                        attempt_count,
                         timeout=0.1) == [1234, 5678]
     catch e
         if e isa ModbusTimeout
@@ -225,15 +226,29 @@ end
 
 function read_registers(io, a, f, register, count)
     r = request(io, a, f, UInt16[register, count])
-    reinterpret(UInt16, r[4:end])
+    reinterpret(UInt16, r[2:end])
 end
+
+read_register(io, a, register) = read_registers(io, a, register, 1)[1]
+
+read_registers(io, a, register, count) =
+    read_registers(io, a, READ_HOLDING_REGISTERS, register, count)
+
+
+read_input_registers(io, a, register, count) =
+    read_registers(io, a, READ_INPUT_REGISTERS, register, count)
 
 
 function write_register(io, a, register, value)
-    r = request(io, a, 6, UInt16[register, value])
-    reinterpret(UInt16, r[3:end])
+    r = request(io, a, WRITE_SINGLE_REGISTER, UInt16[register, value])
+    nothing
 end
 
+
+function write_coil(io, a, coil, value)
+    r = request(io, a, WRITE_SINGLE_COIL, UInt16[coil, value ? 0xFF00 : 0x0000])
+    nothing
+end
 
 
 # MODBUS RTU Framing
