@@ -234,6 +234,7 @@ read_register(io, a, register) = read_registers(io, a, register, 1)[1]
 read_registers(io, a, register, count) =
     read_registers(io, a, READ_HOLDING_REGISTERS, register, count)
 
+read_input_register(io, a, register) = read_input_registers(io, a, register, 1)[1]
 
 read_input_registers(io, a, register, count) =
     read_registers(io, a, READ_INPUT_REGISTERS, register, count)
@@ -277,25 +278,21 @@ Wait for MODBUS response frame.
 function read_frame(io; timeout = 0.5)
 
     deadline = time() + timeout
+    frame = UInt8[]
 
     while time() < deadline
 
-        a = bytesavailable(io)
-        sleep(modbus_inter_frame_delay #=FIXME=# * 10)
-        b = bytesavailable(io)
-
-        # If no new bytes have arrived, read the response.
-        if (a > 0 && a == b)
-
-            response = readavailable(io);
-
-            if crc_16(response) != 0
-                @warn "Bad MOSBUS CRC $response $(escape_string(String(copy(response))))"
-                throw(ModbusCRCError())
-            else
-                return response[1:end-2]
-            end
+        if bytesavailable(io) == 0
+            sleep(modbus_inter_frame_delay)
         end
+
+        append!(frame, readavailable(io))
+
+        if (length(frame) >= 4) && (crc_16(frame) == 0)
+            return frame[1:end-2]
+        end
+        # FIXME ModbusCRCError is no longer thrown.
+        # Need to reconsider timeout vs CRC error.
     end
 
     throw(ModbusTimeout());

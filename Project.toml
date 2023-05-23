@@ -1,7 +1,7 @@
 name = "ModbusRTU"
 uuid = "8d7398fa-b60b-4272-9c66-8a648b14b1f9"
 authors = ["notinaboat <notinaboat@icloud.com>"]
-version = "0.1.1"
+version = "0.1.2"
 
 [deps]
 CRC = "44b605c4-b955-5f2b-9b6d-d2bd01d3d205"
