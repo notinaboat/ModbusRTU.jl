@@ -32,6 +32,11 @@ const READ_INPUT_REGISTERS = 4
 const WRITE_SINGLE_COIL = 5
 const WRITE_SINGLE_REGISTER = 6
 
+const SERVER_DEVICE_FAILURE = 4
+const ILLEGAL_DATA_VALUE = 3
+const ILLEGAL_DATA_ADDRESS = 2
+const ILLEGAL_FUNCTION = 1
+
 # Exceptions
 
 abstract type ModbusException <: Exception end
@@ -214,6 +219,10 @@ function request(io, frame; attempt_count=5, timeout=0.5)
     catch err
         if err isa ModbusRequestError
             @warn ModbusRequestError frame
+        end
+        @retry if err isa ModbusRequestError &&
+                  err.code == SERVER_DEVICE_FAILURE
+            @warn "ModbusRTU SERVER_DEVICE_FAILURE"
         end
         @retry if err isa ModbusTimeout
             @warn err
