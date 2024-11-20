@@ -24,9 +24,8 @@ using UnixIO: C
 using CRC
 crc_16 = crc(CRC_16_MODBUS)
 
-greet() = print("Hello World!")
 
-
+const READ_DISCRETE_INPUTS = 2
 const READ_HOLDING_REGISTERS = 3
 const READ_INPUT_REGISTERS = 4
 const WRITE_SINGLE_COIL = 5
@@ -51,6 +50,14 @@ end
 
 # Serial Port Interface Functions
 
+struct ModbusRTULittleEndian{T}
+    io::T
+end
+
+struct ModbusRTUBigEndian{T}
+    io::T
+end
+
 README"""
 ## Open a Serial Port
 
@@ -60,15 +67,23 @@ Open a serial port for use with ModbusRTU.jl.
 
 e.g. `ModbusRTU.open("/dev/tty.usbserial-1410")`
 """
-function open(port; speed=9600)
+function open(port; speed=9600, endian = :big)
     io = UnixIO.open(port, C.O_RDWR | C.O_NOCTTY)
     UnixIO.tcsetattr(io) do attr
         UnixIO.setraw(attr)
         attr.speed=speed
         attr.c_cflag |= (C.CLOCAL | C.CREAD)
     end
-    return io
+    if endian == :big 
+        return ModbusRTUBigEndian(io)
+    else
+        return ModbusRTULittleEndian(io)
+    end
 end
+
+endian(::Any, v) = bswap.(v)
+endian(::ModbusRTULittleEndian, v) = v
+
 
 
 """
@@ -103,6 +118,8 @@ function set_baud(io::T, speed_bps) where T <: UnixIO.IO
     end
 end
 
+set_baud(io, x) = set_baud(io.io, x)
+
 
 README"""
 ## Trial Serial Port Speed
@@ -113,7 +130,7 @@ Attempt to contact `server` using `speed_bps`.
 Return `true` on success.
 """
 function try_baud(io, server, speed_bps)
-    set_baud(io, speed_bps)
+    set_baud(io.io, speed_bps)
     ping(io, server)
 end
 
@@ -139,11 +156,11 @@ end
 See [6.8 0x08 Diagnostics, p21](https://www.modbus.org/docs/Modbus_Application_Protocol_V1_1b3.pdf)
 """
 function echo_query_data(io, server, data; kw...)
-    r = request(io, server, 8, UInt16[0, data...]; kw...)
+    r = request(io, server, 8, endian(io, UInt16[0, data...]); kw...)
     if isodd(length(r))
         return nothing
     end
-    reinterpret(UInt16, r)[2:end]
+    endian(io, reinterpret(UInt16, r))[2:end]
 end
 
 
@@ -193,21 +210,29 @@ function request(io, server, func, data=UInt8[]; kw...)
 end
 
 request(io, a, f, d::Vector{UInt16}; kw...) =
-    request(io, a, f, reinterpret(UInt8, d); kw...)
+request(io, a, f, reinterpret(UInt8, endian(io, d)); kw...)
 
 request(io, a, f, d::UInt16; kw...) =
     request(io, a, f, [d]; kw...)
+
+last_frame_time = 0.0
 
 function request(io, frame; attempt_count=5, timeout=0.5)
 
     @repeat attempt_count try
 
         @repeat attempt_count try
+            global last_frame_time
+            while time() < (last_frame_time + modbus_inter_frame_delay)
+                sleep(0.0005)
+            end
             send_frame(io, frame)
             response = read_frame(io; timeout)
+            last_frame_time = time()
             if (response[2] & 0x80) != 0x00
                 throw(ModbusRequestError(response[3]))
             else
+                last_frame_time = time()
                 return response[3:end]
             end
         catch err
@@ -235,8 +260,11 @@ end
 
 function read_registers(io, a, f, register, count)
     r = request(io, a, f, UInt16[register, count])
-    reinterpret(UInt16, r[2:end])
+    endian(io, reinterpret(UInt16, r[2:end]))
 end
+
+read_inputs(io, a, register, count) =
+    request(io, a, READ_DISCRETE_INPUTS, UInt16[register, count])
 
 read_register(io, a, register) = read_registers(io, a, register, 1)[1]
 
@@ -269,9 +297,9 @@ Append CRC-16 to MODBUS `frame` and send to `io.
 """
 function send_frame(io, frame::Vector{UInt8})
 
-    flush(io)
-    write(io, frame, crc_16(frame))
-    drain(io)
+    flush(io.io)
+    write(io.io, frame, crc_16(frame))
+    drain(io.io)
 end
 
 
@@ -291,11 +319,11 @@ function read_frame(io; timeout = 0.5)
 
     while time() < deadline
 
-        if bytesavailable(io) == 0
+        if bytesavailable(io.io) == 0
             sleep(modbus_inter_frame_delay)
         end
 
-        append!(frame, readavailable(io))
+        append!(frame, readavailable(io.io))
 
         if (length(frame) >= 4) && (crc_16(frame) == 0)
             return frame[1:end-2]
