@@ -52,10 +52,12 @@ end
 
 struct ModbusRTULittleEndian{T}
     io::T
+    prefix::Vector{UInt8}
 end
 
 struct ModbusRTUBigEndian{T}
     io::T
+    prefix::Vector{UInt8}
 end
 
 README"""
@@ -67,7 +69,7 @@ Open a serial port for use with ModbusRTU.jl.
 
 e.g. `ModbusRTU.open("/dev/tty.usbserial-1410")`
 """
-function open(port; speed=9600, endian = :big)
+function open(port; speed=9600, endian = :big, prefix = UInt8[])
     io = UnixIO.open(port, C.O_RDWR | C.O_NOCTTY)
     UnixIO.tcsetattr(io) do attr
         UnixIO.setraw(attr)
@@ -75,9 +77,9 @@ function open(port; speed=9600, endian = :big)
         attr.c_cflag |= (C.CLOCAL | C.CREAD)
     end
     if endian == :big 
-        return ModbusRTUBigEndian(io)
+        return ModbusRTUBigEndian(io, prefix)
     else
-        return ModbusRTULittleEndian(io)
+        return ModbusRTULittleEndian(io, prefix)
     end
 end
 
@@ -90,6 +92,7 @@ endian(::ModbusRTULittleEndian, v) = v
 Ensure that bytes buffered by `io` are transmitted now.
 """
 drain(io::T) where T <: UnixIO.IO = UnixIO.tcdrain(io)
+drain(io) = drain(io.io)
 
 
 """
@@ -224,9 +227,11 @@ function request(io, frame; attempt_count=5, timeout=0.5)
         @repeat attempt_count try
             global last_frame_time
             while time() < (last_frame_time + modbus_inter_frame_delay)
-                sleep(0.0005)
+                sleep(0.00005)
             end
+            #@show :out, io.prefix, frame
             send_frame(io, frame)
+            sleep(0.00005)
             response = read_frame(io; timeout)
             last_frame_time = time()
             if (response[2] & 0x80) != 0x00
@@ -250,7 +255,7 @@ function request(io, frame; attempt_count=5, timeout=0.5)
             @warn "ModbusRTU SERVER_DEVICE_FAILURE"
         end
         @retry if err isa ModbusTimeout
-            @warn err
+            #@warn err
             sleep(0.01)
         end
     end
@@ -297,8 +302,10 @@ Append CRC-16 to MODBUS `frame` and send to `io.
 """
 function send_frame(io, frame::Vector{UInt8})
 
+    frame = [io.prefix; frame; reinterpret(UInt8, [crc_16(frame)])]
+    #@show length(frame)
     flush(io.io)
-    write(io.io, frame, crc_16(frame))
+    write(io.io, frame)
     drain(io.io)
 end
 
@@ -307,6 +314,8 @@ end
 1.75ms delay separates frames. See [MODBUS Over Serial Line, p13](https://www.modbus.org/docs/Modbus_over_serial_line_V1_02.pdf).
 """
 const modbus_inter_frame_delay = 0.00175
+#const modbus_inter_frame_delay = 0.0002
+# FIXME shorter delay for 230400 baud. ?
 
 
 """
@@ -325,8 +334,11 @@ function read_frame(io; timeout = 0.5)
 
         append!(frame, readavailable(io.io))
 
-        if (length(frame) >= 4) && (crc_16(frame) == 0)
-            return frame[1:end-2]
+        if (length(frame) >= 4)
+                #@show :in, frame
+            if (crc_16(frame) == 0)
+                return frame[1:end-2]
+            end
         end
         # FIXME ModbusCRCError is no longer thrown.
         # Need to reconsider timeout vs CRC error.
